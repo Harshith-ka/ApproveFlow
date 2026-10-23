@@ -1,0 +1,540 @@
+// ApproveFlow — Production-Level Prisma Schema
+// Version 1.0 · PostgreSQL & Prisma ORM
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ----------------------------------------------------
+// ENUMS
+// ----------------------------------------------------
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MANAGER
+  MEMBER
+}
+
+enum MemberStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum ProjectAccessRole {
+  LEAD
+  CONTRIBUTOR
+  VIEWER
+}
+
+enum ClientAccessRole {
+  CLIENT_REVIEWER
+  CLIENT_APPROVER
+}
+
+enum DeliverableCategory {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+enum FileAssetStatus {
+  PENDING_UPLOAD
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum ReviewRequestStatus {
+  DRAFT
+  IN_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  REJECTED
+  CANCELLED
+  SUPERSEDED
+}
+
+enum ReviewDecisionType {
+  APPROVED
+  CHANGES_REQUESTED
+  REJECTED
+}
+
+enum AnchorType {
+  POINT       // Normalized coordinates { x: 0.42, y: 0.68 }
+  RECTANGLE   // Normalized box { x, y, width, height }
+  TIMESTAMP   // Video millisecond timestamp { timestampMs: 14200 }
+  GENERAL     // Deliverable-level general feedback
+}
+
+enum ThreadStatus {
+  OPEN
+  RESOLVED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+}
+
+enum OutboxStatus {
+  PENDING
+  PUBLISHED
+  FAILED
+}
+
+// ----------------------------------------------------
+// MODELS
+// ----------------------------------------------------
+
+model User {
+  id                String       @id @default(uuid())
+  email             String       @unique
+  passwordHash      String       @map("password_hash")
+  name              String
+  avatarUrl         String?      @map("avatar_url")
+  emailVerifiedAt   DateTime?    @map("email_verified_at")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  sessions          Session[]
+  memberships       WorkspaceMember[]
+  ownedWorkspaces   Workspace[]  @relation("WorkspaceOwner")
+  clientContacts    ClientContact[]
+  projectMembers    ProjectMember[]
+  createdDeliverables Deliverable[]
+  createdVersions   DeliverableVersion[]
+  reviewParticipants ReviewParticipant[]
+  reviewDecisions   ReviewDecision[]
+  authoredComments  Comment[]
+  notifications     Notification[]
+  auditEvents       AuditEvent[]
+
+  @@map("users")
+}
+
+model Session {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  tokenHash   String    @unique @map("token_hash")
+  ipAddress   String?   @map("ip_address")
+  userAgent   String?   @map("user_agent")
+  expiresAt   DateTime  @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("sessions")
+}
+
+model Workspace {
+  id          String       @id @default(uuid())
+  name        String
+  slug        String       @unique
+  logoUrl     String?      @map("logo_url")
+  timezone    String       @default("UTC")
+  ownerId     String       @map("owner_id")
+  planId      String       @default("starter") @map("plan_id")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  owner       User         @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  members     WorkspaceMember[]
+  invitations Invitation[]
+  clients     ClientOrganization[]
+  clientContacts ClientContact[]
+  projects    Project[]
+  deliverables Deliverable[]
+  fileAssets  FileAsset[]
+  notifications Notification[]
+  auditEvents AuditEvent[]
+  outboxEvents OutboxEvent[]
+  subscription WorkspaceSubscription?
+
+  @@index([slug])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(uuid())
+  workspaceId String        @map("workspace_id")
+  userId      String        @map("user_id")
+  role        WorkspaceRole @default(MEMBER)
+  status      MemberStatus  @default(ACTIVE)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+  @@map("workspace_members")
+}
+
+model Invitation {
+  id          String        @id @default(uuid())
+  workspaceId String        @map("workspace_id")
+  projectId   String?       @map("project_id")
+  email       String
+  role        WorkspaceRole @default(MEMBER)
+  tokenHash   String        @unique @map("token_hash")
+  expiresAt   DateTime      @map("expires_at")
+  acceptedAt  DateTime?     @map("accepted_at")
+  invitedById String?       @map("invited_by_id")
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project     Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([email])
+  @@index([tokenHash])
+  @@map("invitations")
+}
+
+model ClientOrganization {
+  id          String        @id @default(uuid())
+  workspaceId String        @map("workspace_id")
+  name        String
+  logoUrl     String?       @map("logo_url")
+  status      String        @default("ACTIVE")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contacts    ClientContact[]
+  projects    Project[]
+
+  @@index([workspaceId])
+  @@map("client_organizations")
+}
+
+model ClientContact {
+  id                   String             @id @default(uuid())
+  workspaceId          String             @map("workspace_id")
+  clientOrganizationId String             @map("client_organization_id")
+  userId               String             @map("user_id")
+  title                String?
+  phone                String?
+  createdAt            DateTime           @default(now()) @map("created_at")
+
+  workspace            Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  organization         ClientOrganization @relation(fields: [clientOrganizationId], references: [id], onDelete: Cascade)
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectGrants        ProjectClientAccess[]
+
+  @@unique([workspaceId, userId])
+  @@index([clientOrganizationId])
+  @@map("client_contacts")
+}
+
+model Project {
+  id                   String             @id @default(uuid())
+  workspaceId          String             @map("workspace_id")
+  clientOrganizationId String             @map("client_organization_id")
+  name                 String
+  description          String?
+  status               ProjectStatus      @default(ACTIVE)
+  dueAt                DateTime?          @map("due_at")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+
+  workspace            Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  clientOrganization   ClientOrganization @relation(fields: [clientOrganizationId], references: [id], onDelete: Restrict)
+  members              ProjectMember[]
+  clientAccess         ProjectClientAccess[]
+  deliverables         Deliverable[]
+  invitations          Invitation[]
+
+  @@index([workspaceId])
+  @@index([clientOrganizationId])
+  @@index([status])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id          String            @id @default(uuid())
+  projectId   String            @map("project_id")
+  userId      String            @map("user_id")
+  accessRole  ProjectAccessRole @default(CONTRIBUTOR) @map("access_role")
+  createdAt   DateTime          @default(now()) @map("created_at")
+
+  project     Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+model ProjectClientAccess {
+  id              String           @id @default(uuid())
+  projectId       String           @map("project_id")
+  clientContactId String           @map("client_contact_id")
+  role            ClientAccessRole @default(CLIENT_REVIEWER)
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  contact         ClientContact    @relation(fields: [clientContactId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, clientContactId])
+  @@index([projectId])
+  @@index([clientContactId])
+  @@map("project_client_access")
+}
+
+model Deliverable {
+  id          String              @id @default(uuid())
+  workspaceId String              @map("workspace_id")
+  projectId   String              @map("project_id")
+  title       String
+  description String?
+  category    DeliverableCategory @default(IMAGE)
+  createdById String              @map("created_by_id")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project     Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy   User                @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  versions    DeliverableVersion[]
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@map("deliverables")
+}
+
+model DeliverableVersion {
+  id            String          @id @default(uuid())
+  deliverableId String          @map("deliverable_id")
+  versionNumber Int             @map("version_number")
+  fileAssetId   String          @map("file_asset_id")
+  changelog     String?
+  createdById   String          @map("created_by_id")
+  createdAt     DateTime        @default(now()) @map("created_at")
+
+  deliverable   Deliverable     @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
+  fileAsset     FileAsset       @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
+  createdBy     User            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  reviewRequests ReviewRequest[]
+  commentThreads CommentThread[]
+  reviewDecisions ReviewDecision[]
+
+  @@unique([deliverableId, versionNumber])
+  @@index([deliverableId])
+  @@index([fileAssetId])
+  @@map("deliverable_versions")
+}
+
+model FileAsset {
+  id          String          @id @default(uuid())
+  workspaceId String          @map("workspace_id")
+  storageKey  String          @unique @map("storage_key")
+  fileName    String          @map("file_name")
+  mimeType    String          @map("mime_type")
+  sizeBytes   BigInt          @map("size_bytes")
+  checksum    String          // e.g. SHA-256 for approval evidence verification
+  status      FileAssetStatus @default(PENDING_UPLOAD)
+  previewUrl  String?         @map("preview_url")
+  metadata    Json?           // Dimensions { width, height }, durationMs, fps, etc.
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  versions    DeliverableVersion[]
+
+  @@index([workspaceId])
+  @@map("file_assets")
+}
+
+model ReviewRequest {
+  id             String              @id @default(uuid())
+  workspaceId    String              @map("workspace_id")
+  versionId      String              @map("version_id")
+  status         ReviewRequestStatus @default(IN_REVIEW)
+  instructions   String?
+  dueAt          DateTime?           @map("due_at")
+  submittedAt    DateTime            @default(now()) @map("submitted_at")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+
+  version        DeliverableVersion  @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  participants   ReviewParticipant[]
+  decisions      ReviewDecision[]
+  commentThreads CommentThread[]
+
+  @@index([workspaceId])
+  @@index([versionId])
+  @@index([status])
+  @@map("review_requests")
+}
+
+model ReviewParticipant {
+  id              String           @id @default(uuid())
+  reviewRequestId String           @map("review_request_id")
+  userId          String           @map("user_id")
+  role            ClientAccessRole @default(CLIENT_REVIEWER)
+  invitedAt       DateTime         @default(now()) @map("invited_at")
+
+  reviewRequest   ReviewRequest    @relation(fields: [reviewRequestId], references: [id], onDelete: Cascade)
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewRequestId, userId])
+  @@index([reviewRequestId])
+  @@map("review_participants")
+}
+
+model ReviewDecision {
+  id               String             @id @default(uuid())
+  reviewRequestId  String             @map("review_request_id")
+  versionId        String             @map("version_id")
+  actorId          String             @map("actor_id")
+  decision         ReviewDecisionType
+  note             String?
+  confirmationText String             @map("confirmation_text")
+  signatureHash    String             @map("signature_hash") // Cryptographic proof hash of actor, version, timestamp, checksum
+  decidedAt        DateTime           @default(now()) @map("decided_at")
+
+  reviewRequest    ReviewRequest      @relation(fields: [reviewRequestId], references: [id], onDelete: Cascade)
+  version          DeliverableVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  actor            User               @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([reviewRequestId, actorId])
+  @@index([reviewRequestId])
+  @@index([versionId])
+  @@map("review_decisions")
+}
+
+model CommentThread {
+  id              String         @id @default(uuid())
+  versionId       String         @map("version_id")
+  reviewRequestId String?        @map("review_request_id")
+  anchorType      AnchorType     @default(GENERAL) @map("anchor_type")
+  anchorData      Json           @map("anchor_data") // e.g. { x: 0.42, y: 0.68 } or { timestampMs: 12500 }
+  status          ThreadStatus   @default(OPEN)
+  resolvedById    String?        @map("resolved_by_id")
+  resolvedAt      DateTime?      @map("resolved_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  version         DeliverableVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  reviewRequest   ReviewRequest?     @relation(fields: [reviewRequestId], references: [id], onDelete: SetNull)
+  comments        Comment[]
+
+  @@index([versionId])
+  @@index([reviewRequestId])
+  @@index([status])
+  @@map("comment_threads")
+}
+
+model Comment {
+  id        String        @id @default(uuid())
+  threadId  String        @map("thread_id")
+  authorId  String        @map("author_id")
+  body      String
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+  deletedAt DateTime?     @map("deleted_at")
+
+  thread    CommentThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  author    User          @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([threadId])
+  @@map("comments")
+}
+
+model Notification {
+  id          String    @id @default(uuid())
+  workspaceId String    @map("workspace_id")
+  userId      String    @map("user_id")
+  type        String    // REVIEW_REQUESTED, COMMENT_ADDED, DECISION_SUBMITTED, REVISION_NEEDED
+  title       String
+  message     String
+  payload     Json?
+  readAt      DateTime? @map("read_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([readAt])
+  @@map("notifications")
+}
+
+model AuditEvent {
+  id          String    @id @default(uuid())
+  workspaceId String    @map("workspace_id")
+  actorId     String?   @map("actor_id")
+  action      String    // e.g. "AUTH_LOGIN", "REVIEW_APPROVED", "VERSION_UPLOADED"
+  entityType  String    @map("entity_type") // e.g. "DeliverableVersion", "ReviewDecision"
+  entityId    String    @map("entity_id")
+  metadata    Json?
+  ipAddress   String?   @map("ip_address")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor       User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_events")
+}
+
+model OutboxEvent {
+  id          String       @id @default(uuid())
+  workspaceId String       @map("workspace_id")
+  eventType   String       @map("event_type")
+  payload     Json
+  publishedAt DateTime?    @map("published_at")
+  retryCount  Int          @default(0) @map("retry_count")
+  status      OutboxStatus @default(PENDING)
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([status])
+  @@map("outbox_events")
+}
+
+model WorkspaceSubscription {
+  id                     String             @id @default(uuid())
+  workspaceId            String             @unique @map("workspace_id")
+  planId                 String             @map("plan_id")
+  providerSubscriptionId String?            @map("provider_subscription_id")
+  status                 SubscriptionStatus @default(TRIALING)
+  currentPeriodEnd       DateTime?          @map("current_period_end")
+  createdAt              DateTime           @default(now()) @map("created_at")
+  updatedAt              DateTime           @updatedAt @map("updated_at")
+
+  workspace              Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("workspace_subscriptions")
+}

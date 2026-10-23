@@ -1,0 +1,78 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "ApproveFlow REST API",
+    "description": "Production API specification for ApproveFlow: Client Review, Deliverable Management & Approval SaaS",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.approveflow.com/api/v1",
+      "description": "Production Gateway"
+    }
+  ],
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "summary": "Register account with email verification",
+        "tags": ["Authentication"]
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "summary": "Authenticate user session with Argon2id hash",
+        "tags": ["Authentication"]
+      }
+    },
+    "/workspaces": {
+      "post": {
+        "summary": "Create isolated workspace tenant",
+        "tags": ["Workspaces"]
+      },
+      "get": {
+        "summary": "List accessible workspaces for user",
+        "tags": ["Workspaces"]
+      }
+    },
+    "/files/upload-intents": {
+      "post": {
+        "summary": "Request short-lived S3/R2 signed upload URL with checksum verification",
+        "tags": ["Files"]
+      }
+    },
+    "/versions/{id}/review-requests": {
+      "post": {
+        "summary": "Submit immutable deliverable version for client review",
+        "tags": ["Reviews"]
+      }
+    },
+    "/reviews/{id}/threads": {
+      "post": {
+        "summary": "Create contextual annotation pin or video timestamp thread",
+        "tags": ["Reviews"]
+      }
+    },
+    "/reviews/{id}/decisions": {
+      "post": {
+        "summary": "Execute formal client approval or revision request with digital signature evidence",
+        "tags": ["Reviews"],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/workspaces/{id}/audit-events": {
+      "get": {
+        "summary": "Query immutable workspace audit trail",
+        "tags": ["Audit"]
+      }
+    }
+  }
+}
