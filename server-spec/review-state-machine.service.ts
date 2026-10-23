@@ -2,8 +2,32 @@
 // Implements PRD Section 5.8 (Deliverable review state machine) and Section 6 (Permission model)
 
 import { Injectable, ForbiddenException, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PrismaClient, ReviewRequestStatus, ReviewDecisionType, ClientAccessRole } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import * as crypto from 'crypto';
+
+export const ReviewRequestStatus = {
+  DRAFT: 'DRAFT',
+  IN_REVIEW: 'IN_REVIEW',
+  CHANGES_REQUESTED: 'CHANGES_REQUESTED',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+  CANCELLED: 'CANCELLED',
+  SUPERSEDED: 'SUPERSEDED',
+} as const;
+export type ReviewRequestStatus = (typeof ReviewRequestStatus)[keyof typeof ReviewRequestStatus];
+
+export const ReviewDecisionType = {
+  APPROVED: 'APPROVED',
+  CHANGES_REQUESTED: 'CHANGES_REQUESTED',
+  REJECTED: 'REJECTED',
+} as const;
+export type ReviewDecisionType = (typeof ReviewDecisionType)[keyof typeof ReviewDecisionType];
+
+export const ClientAccessRole = {
+  CLIENT_REVIEWER: 'CLIENT_REVIEWER',
+  CLIENT_APPROVER: 'CLIENT_APPROVER',
+} as const;
+export type ClientAccessRole = (typeof ClientAccessRole)[keyof typeof ClientAccessRole];
 
 export interface SubmitDecisionInput {
   workspaceId: string;
